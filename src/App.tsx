@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ClipboardList, CheckCircle2, XCircle, UtensilsCrossed, Clock, Trash2 } from 'lucide-react'
-
-const STORAGE_KEY = 'potluck-rsvp-v1'
+import { ClipboardList, CheckCircle2, XCircle, Clock, Trash2 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
 const EVENT = {
   title: 'Team Potluck',
@@ -33,13 +32,8 @@ function formatTime(iso: string) {
 }
 
 export default function App() {
-  const [rsvps, setRsvps] = useState<RSVP[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-    } catch {
-      return []
-    }
-  })
+  const [rsvps, setRsvps] = useState<RSVP[]>([])
+  const [loading, setLoading] = useState(true)
 
   const [name, setName] = useState('')
   const [attending, setAttending] = useState(true)
@@ -51,9 +45,33 @@ export default function App() {
   const [wipePass, setWipePass] = useState('')
   const [wipeError, setWipeError] = useState('')
 
+  // Initial fetch
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rsvps))
-  }, [rsvps])
+    supabase
+      .from('rsvps')
+      .select('*')
+      .order('time', { ascending: false })
+      .then(({ data }) => {
+        if (data) setRsvps(data as RSVP[])
+        setLoading(false)
+      })
+  }, [])
+
+  // Real-time subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('rsvps-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rsvps' }, () => {
+        supabase
+          .from('rsvps')
+          .select('*')
+          .order('time', { ascending: false })
+          .then(({ data }) => { if (data) setRsvps(data as RSVP[]) })
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   const stats = {
     total: rsvps.length,
@@ -61,27 +79,27 @@ export default function App() {
     notAttending: rsvps.filter(r => !r.attending).length,
   }
 
-  function handleSubmit(e: { preventDefault(): void }) {
+  async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!name.trim()) return
 
-    const idx = rsvps.findIndex(
+    const existing = rsvps.find(
       r => r.name.toLowerCase() === name.trim().toLowerCase()
     )
     const entry: RSVP = {
-      id: idx >= 0 ? rsvps[idx].id : Date.now(),
+      id: existing ? existing.id : Date.now(),
       name: name.trim(),
       attending,
-      bringing: bringing.trim(),
-      allergies: allergies.trim(),
+      bringing: attending ? bringing.trim() : '',
+      allergies: attending ? allergies.trim() : '',
       time: new Date().toISOString(),
     }
 
-    if (idx >= 0) {
-      setRsvps(prev => prev.map((r, i) => (i === idx ? entry : r)))
+    if (existing) {
+      await supabase.from('rsvps').update(entry).eq('id', existing.id)
       triggerFlash('Response updated')
     } else {
-      setRsvps(prev => [...prev, entry])
+      await supabase.from('rsvps').insert(entry)
       triggerFlash('RSVP submitted!')
     }
 
@@ -96,9 +114,9 @@ export default function App() {
     setTimeout(() => setFlash(null), 2800)
   }
 
-  function handleWipeConfirm() {
+  async function handleWipeConfirm() {
     if (wipeUser === 'Admin' && wipePass === 'Admin') {
-      setRsvps([])
+      await supabase.from('rsvps').delete().neq('id', 0)
       setWipeModalOpen(false)
       setWipeUser('')
       setWipePass('')
@@ -293,36 +311,35 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bringing */}
+            {/* Bringing + Allergies — only when attending */}
             {attending && (
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-stone-800">
-                  What are you bringing?{' '}
-                  <span className="text-stone-400 font-normal">(Optional)</span>
-                </label>
-                <Input
-                  value={bringing}
-                  onChange={e => setBringing(e.target.value)}
-                  placeholder="e.g. Potato Salad, Brownies…"
-                  className="rounded-lg border-stone-200 bg-stone-50 placeholder:text-stone-400 focus-visible:ring-[#E45C2B]"
-                />
-              </div>
-            )}
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-stone-800">
+                    What are you bringing?{' '}
+                    <span className="text-stone-400 font-normal">(Optional)</span>
+                  </label>
+                  <Input
+                    value={bringing}
+                    onChange={e => setBringing(e.target.value)}
+                    placeholder="e.g. Potato Salad, Brownies…"
+                    className="rounded-lg border-stone-200 bg-stone-50 placeholder:text-stone-400 focus-visible:ring-[#E45C2B]"
+                  />
+                </div>
 
-            {/* Allergies — only relevant when attending */}
-            {attending && (
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-stone-800">
-                  Any allergies we should know about?{' '}
-                  <span className="text-stone-400 font-normal">(Optional)</span>
-                </label>
-                <Input
-                  value={allergies}
-                  onChange={e => setAllergies(e.target.value)}
-                  placeholder="e.g. Nuts, Gluten, Dairy…"
-                  className="rounded-lg border-stone-200 bg-stone-50 placeholder:text-stone-400 focus-visible:ring-[#E45C2B]"
-                />
-              </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-stone-800">
+                    Any allergies we should know about?{' '}
+                    <span className="text-stone-400 font-normal">(Optional)</span>
+                  </label>
+                  <Input
+                    value={allergies}
+                    onChange={e => setAllergies(e.target.value)}
+                    placeholder="e.g. Nuts, Gluten, Dairy…"
+                    className="rounded-lg border-stone-200 bg-stone-50 placeholder:text-stone-400 focus-visible:ring-[#E45C2B]"
+                  />
+                </div>
+              </>
             )}
 
             <Button
@@ -379,30 +396,36 @@ export default function App() {
               <thead>
                 <tr className="border-b border-stone-100">
                   {[
-                    { label: 'Name', icon: null },
-                    { label: 'Status', icon: null },
-                    { label: 'Bringing', icon: null },
-                    { label: 'Allergies', icon: null },
+                    { label: 'Name' },
+                    { label: 'Status' },
+                    { label: 'Bringing' },
+                    { label: 'Allergies' },
                     { label: 'Time', icon: <Clock size={11} className="inline mr-1 mb-0.5" /> },
                   ].map(col => (
                     <th
                       key={col.label}
                       className="text-left px-5 py-3.5 text-[11px] font-semibold text-stone-400 uppercase tracking-widest"
                     >
-                      {col.icon}{col.label}
+                      {'icon' in col && col.icon}{col.label}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rsvps.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={5} className="text-center py-12 text-stone-400 text-sm">
+                      Loading…
+                    </td>
+                  </tr>
+                ) : rsvps.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="text-center py-12 text-stone-400 text-sm">
                       No responses yet. Be the first!
                     </td>
                   </tr>
                 ) : (
-                  [...rsvps].reverse().map(r => (
+                  rsvps.map(r => (
                     <tr
                       key={r.id}
                       className="border-b border-stone-50 last:border-0 hover:bg-stone-50 transition-colors"
