@@ -83,9 +83,12 @@ export default function App() {
     e.preventDefault()
     if (!name.trim()) return
 
-    const existing = rsvps.find(
-      r => r.name.toLowerCase() === name.trim().toLowerCase()
-    )
+    const { data: existing } = await supabase
+      .from('rsvps')
+      .select('id')
+      .ilike('name', name.trim())
+      .maybeSingle()
+
     const entry: RSVP = {
       id: existing ? existing.id : Date.now(),
       name: name.trim(),
@@ -97,9 +100,11 @@ export default function App() {
 
     if (existing) {
       await supabase.from('rsvps').update(entry).eq('id', existing.id)
+      setRsvps(prev => prev.map(r => r.id === existing.id ? entry : r))
       triggerFlash('Response updated')
     } else {
       await supabase.from('rsvps').insert(entry)
+      setRsvps(prev => [entry, ...prev])
       triggerFlash('RSVP submitted!')
     }
 
@@ -117,6 +122,7 @@ export default function App() {
   async function handleWipeConfirm() {
     if (wipeUser === 'Admin' && wipePass === 'Admin') {
       await supabase.from('rsvps').delete().neq('id', 0)
+      setRsvps([])
       setWipeModalOpen(false)
       setWipeUser('')
       setWipePass('')
