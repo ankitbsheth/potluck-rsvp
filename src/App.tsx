@@ -8,8 +8,8 @@ import { supabase } from '@/lib/supabase'
 const EVENT = {
   title: 'Team Potluck',
   subtitle: 'SDM',
-  date: '30th April 2026',
-  time: '12PM – 2PM',
+  date: '21st May 2026',
+  time: '12PM onwards',
   note: "Good food, great company. Let us know if you'll be joining the feast.",
 }
 
@@ -40,6 +40,7 @@ export default function App() {
   const [bringing, setBringing] = useState('')
   const [allergies, setAllergies] = useState('')
   const [flash, setFlash] = useState<string | null>(null)
+  const [nameError, setNameError] = useState('')
   const [wipeModalOpen, setWipeModalOpen] = useState(false)
   const [wipeUser, setWipeUser] = useState('')
   const [wipePass, setWipePass] = useState('')
@@ -85,24 +86,35 @@ export default function App() {
 
     const { data: existing } = await supabase
       .from('rsvps')
-      .select('id')
+      .select('id, attending')
       .ilike('name', name.trim())
       .maybeSingle()
 
-    const entry: RSVP = {
-      id: existing ? existing.id : Date.now(),
-      name: name.trim(),
-      attending,
-      bringing: attending ? bringing.trim() : '',
-      allergies: attending ? allergies.trim() : '',
-      time: new Date().toISOString(),
-    }
-
     if (existing) {
+      if (existing.attending === attending) {
+        setNameError("You've already RSVP'd with this response. Use a different vote to update.")
+        return
+      }
+      const entry: RSVP = {
+        id: existing.id,
+        name: name.trim(),
+        attending,
+        bringing: attending ? bringing.trim() : '',
+        allergies: attending ? allergies.trim() : '',
+        time: new Date().toISOString(),
+      }
       await supabase.from('rsvps').update(entry).eq('id', existing.id)
       setRsvps(prev => prev.map(r => r.id === existing.id ? entry : r))
-      triggerFlash('Response updated')
+      triggerFlash('Response updated!')
     } else {
+      const entry: RSVP = {
+        id: Date.now(),
+        name: name.trim(),
+        attending,
+        bringing: attending ? bringing.trim() : '',
+        allergies: attending ? allergies.trim() : '',
+        time: new Date().toISOString(),
+      }
       await supabase.from('rsvps').insert(entry)
       setRsvps(prev => [entry, ...prev])
       triggerFlash('RSVP submitted!')
@@ -278,14 +290,15 @@ export default function App() {
               <label className="text-sm font-semibold text-stone-800">Your Name</label>
               <Input
                 value={name}
-                onChange={e => setName(e.target.value)}
+                onChange={e => { setName(e.target.value); setNameError('') }}
                 placeholder="Enter your full name"
                 required
                 className="rounded-lg border-stone-200 bg-stone-50 placeholder:text-stone-400 focus-visible:ring-[#E45C2B]"
               />
-              <p className="text-xs text-stone-400">
-                Already RSVP'd? Use the same name to update your response.
-              </p>
+              {nameError
+                ? <p className="text-xs text-red-500 font-medium">{nameError}</p>
+                : <p className="text-xs text-stone-400">Already RSVP'd? Use the same name to change your response.</p>
+              }
             </div>
 
             {/* Attending toggle */}
@@ -294,7 +307,7 @@ export default function App() {
               <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setAttending(true)}
+                  onClick={() => { setAttending(true); setNameError('') }}
                   className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium border-2 transition-all ${
                     attending
                       ? 'border-[#E45C2B] bg-orange-50 text-[#E45C2B]'
@@ -305,7 +318,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAttending(false)}
+                  onClick={() => { setAttending(false); setNameError('') }}
                   className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium border-2 transition-all ${
                     !attending
                       ? 'border-stone-700 bg-stone-100 text-stone-700'
